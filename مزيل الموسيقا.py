@@ -7,7 +7,7 @@ from json import loads
 from re import search
 
 
-########    الثوابت الدوال   ########
+########    الثوابت والدوال   ########
 
 
 BG = '#222244'
@@ -16,40 +16,42 @@ itemsFG = "white"
 ATTRS = {'bg':BG, 'fg':itemsFG}
 
 def getVideo():
-    global videoLink
+    global inputVideo
     
-    videoLink = askopenfile(mode='r', filetypes=[('ملفات فيديو', '*.mp4 *.mov *.mkv')])
+    inputVideo = askopenfile(mode='r', filetypes=[('ملفات فيديو', '*.mp4 *.mov *.mkv')])
     
-    if not videoLink:
+    if not inputVideo:
         showwarning('تنبيه', 'لم يتم اختيار أي ملف')
         return
     
-    elif not videoLink.name.endswith('.mp4'):
+    elif not inputVideo.name.endswith('.mp4'):
         showwarning('تنبيه', '.ربما لا تتم العملية بنجاح لأن صيغة الملف مختلفة\n(.mp4) الرجاء أن يكون الملف المختار بصيغة')
     
     extractAudio()    
 
 def extractAudio():
-    global videoLink, audioLink, guidingLabel
+    global SOURCE_LINK, inputVideo, inputAudioFullName, guidingLabel
     
+    SOURCE_LINK = inputVideo.name.rsplit("/", 1)[0]
+
     try:
         jsonVideoLen = run(['ffprobe',                  # برمجية
                         '-v', 'error',                  # عدم إظهار الملاحظات البرمجية
                         '-show_entries',                # للعرض فقط
                         'format=duration',              # صفة مدة الفيديو
-                        '-of', 'json', videoLink.name], # JSON عرض ككائن 
+                        '-of', 'json', inputVideo.name], # JSON عرض ككائن 
                        stdout=PIPE, stderr=STDOUT)
         
         # وتحديد المدة وتحويلها إلى عدد صحيح JSON التعامل مع كائن 
         videoLen = float(loads(jsonVideoLen.stdout)['format']['duration']) 
-        audioLink = f'{videoLink.name.rsplit(".", 1)[0]}.wav'
-        
+        inputAudioFullName = inputVideo.name.rsplit(sep='.', maxsplit=1)[0] + '.wav'
+
         commandOutput = Popen([
-        'ffmpeg', '-i', videoLink.name,
+        'ffmpeg', '-i', inputVideo.name,
         '-vn',                          # تجاهل الفيديو
         '-acodec', 'pcm_s16le',         # كودك wav قياسي
         '-ar', '44100',                 # 44100hz معدل عينات 
-        audioLink,
+        inputAudioFullName,
         '-y'],                            # الكتابة فوق الملف إذا موجود
         stderr=PIPE, text=True)
         
@@ -63,13 +65,16 @@ def extractAudio():
                     finishedDuration = int(h) * 3600 + int(m) * 60 + float(s)
                     
                     progress = (finishedDuration / videoLen) * 100
-                    print(f"\rProgress: {progress:.2f}%", end="", flush=True)
+                    print(f"\rProgress: {progress:.1f}%", end="", flush=True)
+                    
                     progressbar['value'] = progress
+                    app.update()
 
         commandOutput.wait()
 
-        print("\rProgress: 100%\t", flush=True)
+        print("\rProgress: 100 %", flush=True) # المسافة لغرض تصحيح الطباعة، بدونها سيظهر هكذا: %%100 
         progressbar['value'] = 100
+        app.update()
 
     except CalledProcessError:
         showerror('خطأ', '.حدث خطأ في عملية استخراج الصوت، حاول مجددا')
@@ -78,26 +83,57 @@ def extractAudio():
     else:
         guidingLabel = Label(fr, ATTRS, text='تم استخراج الصوت')
         guidingLabel.pack(pady=(30, 10))
-        print(audioLink)
+
+        app.update()
         separateAudio()
 
 def separateAudio():
-    global videoLink, audioLink, guidingLabel
+    global inputVideo, inputAudioFullName, outputFolder
 
-    outputFolder = 'separated'
-
-    command = [
+    # أمر فصل الصوت إلى أصوات بشرية وأصوات غير بشرية
+    separationCommand = [
         'demucs',
-        '--two-stems=vocals',
+        '--mp3',
         '-o',
-        outputFolder,
-        audioLink
+        SOURCE_LINK, # بافتراض أن ملف الصوت في نفس مسار ملف الفيديو
+        '--two-stems=vocals',
+        inputAudioFullName
+    ]
+    run(separationCommand, shell=True) # تشغيل الأمر
+
+    outputFolder = SOURCE_LINK + '/htdemucs/'
+    audioFolderName = inputAudioFullName.rsplit(sep='/', maxsplit=1)[1].removesuffix('.wav')
+    outputFolder += audioFolderName
+
+    print('SOURCE_LINK:\n', SOURCE_LINK)
+    print('inputVideo.name:\n', inputVideo.name)
+    print('inputAudioFullName:\n',inputAudioFullName)
+    print('outputFolder:\n', outputFolder)
+    
+    mergeVideoAndAudio()
+
+def mergeVideoAndAudio():
+    global inputVideo
+    
+    outputVideo = inputVideo.name.rsplit(sep='.', maxsplit=1)[0] + '(بلا موسيقا).mp4' # output.mp4 -> output(بلا موسيقا).mp4
+    outputAudio = outputFolder + '/vocals.mp3'
+
+    print(outputFolder)
+
+    mergingCommand = [
+        'ffmpeg',
+        '-i', inputVideo.name,
+        '-i', outputAudio,
+        '-map', '0:v:0',   # الفيديو من الملف الأول
+        '-map', '1:a:0',   # الصوت من الملف الثاني
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        outputVideo,
+        '-y'
     ]
 
-    run(command, shell=True)
-
-    
-
+    run(mergingCommand, shell=True)
+    run(outputVideo, shell=True)
 
 
 ########    تهيئة الواجهة   ########
@@ -105,19 +141,11 @@ def separateAudio():
 
 app = Tk()
 app.title('مزيل الموسيقا')
-
-fr = Frame(app, bg=BG)
-
 app.minsize(250, 200)
 app.maxsize(250, 200)
 
+fr = Frame(app, bg=BG)
 fr.pack(expand=True, fill='both')
-
-
-########    محتوى الواجهة   ########
-
-
-# Label(fr, ATTRS,text='!مرحبًا بك في مزيل الموسيقا', font=('Helvatica', 12, 'bold')).pack(pady=(30, 10))
 
 selectingVidBtn = Button(fr, ATTRS, bg=itemsBG, text='اختر', command=getVideo)
 selectingVidBtn.pack(ipadx=20, ipady=3, pady=30)
