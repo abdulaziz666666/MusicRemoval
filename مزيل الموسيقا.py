@@ -212,7 +212,10 @@ def openOutputVideo():
 
 app = Tk()
 app.title('مزيل الموسيقا')
-app.iconbitmap('شعار مزيل الموسيقا.ico')
+
+try:
+    app.iconbitmap('شعار مزيل الموسيقا.ico')
+except: pass
 
 fr = Frame(app, bg=BG)
 fr.pack(expand=True, fill='both', ipadx=5)
